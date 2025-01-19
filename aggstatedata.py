@@ -156,40 +156,50 @@ def aggregate_state_data(states_and_territories, technology_code_df, provider_df
                 for block_geoid, group in grouped:
                     row = {'block_geoid': block_geoid}
                     for tech_abbr in technology_code_df['Abbr'].str.strip():
-                        providers = group[group['technology_abbr'] == tech_abbr]['provider_name'].unique().tolist()
+                        tech_group = group[group['technology_abbr'] == tech_abbr]
+                        providers = tech_group['provider_name'].unique().tolist()
+                        
+                        # Get location counts per provider
+                        location_counts = []
+                        for provider in providers:
+                            loc_count = tech_group[tech_group['provider_name'] == provider]['location_id'].nunique()
+                            location_counts.append(loc_count)
+                        
                         row[f'{tech_abbr}'] = providers if providers else []
+                        row[f'{tech_abbr}L'] = location_counts if location_counts else []
+                        row[f'{tech_abbr}T'] = sum(location_counts) if location_counts else 0
                     output_data.append(row)
 
                 output_df = pd.DataFrame(output_data)
                 
-                # Ensure all technology columns exist with empty lists as default
+                # Ensure all technology columns exist and add calculated columns
                 for tech_abbr in technology_code_df['Abbr'].str.strip():
                     if f'{tech_abbr}' not in output_df.columns:
                         output_df[f'{tech_abbr}'] = output_df.apply(lambda x: [], axis=1)
-
-                # Step 9: Add provider count columns for each technology
-                for tech_abbr in technology_code_df['Abbr'].str.strip():
+                        output_df[f'{tech_abbr}L'] = output_df.apply(lambda x: [], axis=1)
+                        output_df[f'{tech_abbr}T'] = 0
+                    # Add provider count column
                     output_df[f'{tech_abbr}C'] = output_df[f'{tech_abbr}'].apply(len)
-
-                logging.debug(f"Step 9: DataFrame after adding technology columns and counts: {output_df.columns.tolist()}")
-                logging.debug(f"Step 9: DataFrame after adding technology columns and counts:\n{output_df.head()}")
 
                 # Create ordered column list
                 columns = ['block_geoid']
                 for tech_abbr in technology_code_df['Abbr'].str.strip():
                     columns.extend([
-                        f'{tech_abbr}',  # provider names column
-                        f'{tech_abbr}C'   # provider count column
+                        f'{tech_abbr}',      # provider names list
+                        f'{tech_abbr}C',     # provider count
+                        f'{tech_abbr}L',     # location counts list
+                        f'{tech_abbr}T'      # total locations
                     ])
-                                    
+                
                 # Reorder columns
                 output_df = output_df[columns]
                 
                 logging.debug(f"DataFrame with ordered columns: {output_df.columns.tolist()}")
                 logging.debug(f"DataFrame with ordered columns:\n{output_df.head()}")
 
+                # Write output to CSV
                 output_df.to_csv(output_csv_path, index=False)
-                logging.debug(f"Output CSV file written: {output_csv_path}")
+                logging.debug(f"Wrote output to {output_csv_path}")
 
                 # Step 10: Zip the output file
                 logging.debug("Step 10: Zipping the output file")
