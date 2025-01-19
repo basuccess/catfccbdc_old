@@ -177,9 +177,10 @@ def aggregate_state_data(states_and_territories, technology_code_df, provider_df
                     if f'{tech_abbr}' not in output_df.columns:
                         output_df[f'{tech_abbr}'] = output_df.apply(lambda x: [], axis=1)
                         output_df[f'{tech_abbr}L'] = output_df.apply(lambda x: [], axis=1)
-                        output_df[f'{tech_abbr}T'] = 0
                     # Add provider count column
                     output_df[f'{tech_abbr}C'] = output_df[f'{tech_abbr}'].apply(len)
+                    # Add total locations column
+                    output_df[f'{tech_abbr}T'] = output_df[f'{tech_abbr}L'].apply(lambda x: sum(x) if x else 0)
 
                 # Create ordered column list
                 columns = ['block_geoid']
