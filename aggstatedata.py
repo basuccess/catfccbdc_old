@@ -157,19 +157,19 @@ def aggregate_state_data(states_and_territories, technology_code_df, provider_df
                     row = {'block_geoid': block_geoid}
                     for tech_abbr in technology_code_df['Abbr'].str.strip():
                         providers = group[group['technology_abbr'] == tech_abbr]['provider_name'].unique().tolist()
-                        row[f'{tech_abbr}_provider_name'] = providers if providers else []
+                        row[f'{tech_abbr}'] = providers if providers else []
                     output_data.append(row)
 
                 output_df = pd.DataFrame(output_data)
                 
                 # Ensure all technology columns exist with empty lists as default
                 for tech_abbr in technology_code_df['Abbr'].str.strip():
-                    if f'{tech_abbr}_provider_name' not in output_df.columns:
-                        output_df[f'{tech_abbr}_provider_name'] = output_df.apply(lambda x: [], axis=1)
+                    if f'{tech_abbr}' not in output_df.columns:
+                        output_df[f'{tech_abbr}'] = output_df.apply(lambda x: [], axis=1)
 
                 # Step 9: Add provider count columns for each technology
                 for tech_abbr in technology_code_df['Abbr'].str.strip():
-                    output_df[f'{tech_abbr}_provider_count'] = output_df[f'{tech_abbr}_provider_name'].apply(len)
+                    output_df[f'{tech_abbr}C'] = output_df[f'{tech_abbr}'].apply(len)
 
                 logging.debug(f"Step 9: DataFrame after adding technology columns and counts: {output_df.columns.tolist()}")
                 logging.debug(f"Step 9: DataFrame after adding technology columns and counts:\n{output_df.head()}")
