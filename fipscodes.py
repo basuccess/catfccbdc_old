@@ -1,8 +1,6 @@
 # Example list of states and territories formatted as (FIPS Code, Abbreviation, Full Name)
 states_and_territories = [
     ("01", "AL", "Alabama"),
-]
-'''
     ("02", "AK", "Alaska"),
     ("04", "AZ", "Arizona"),
     ("05", "AR", "Arkansas"),
@@ -64,4 +62,3 @@ states_and_territories = [
     ("74", "UM", "U.S. Minor Outlying Islands"),
     ("78", "VI", "U.S. Virgin Islands")
 ]
-'''
