@@ -2,185 +2,190 @@ import pandas as pd
 import zipfile
 import os
 import re
+import time
+import psutil
+import numpy as np
 from datetime import datetime
 import logging
 
+# Pre-compile regex pattern
+BDC_FILE_PATTERN = re.compile(r'(bdc_\d{2}.*_fixed_broadband_)([A-Z]\d{2}_)(.*)\.(csv|zip)')
+
+def read_state_file(file_path):
+    # Read state data file with optimized dtypes
+    dtype_map = {
+        'frn': 'string',
+        'provider_id': 'string',
+        'brand_name': 'string',
+        'location_id': 'string',
+        'technology': 'int32',
+        'max_advertised_download_speed': 'int32',
+        'max_advertised_upload_speed': 'int32',
+        'block_geoid': 'string',
+        'h3_res8_id': 'string'
+    }
+    return pd.read_csv(file_path, dtype=dtype_map)
+
+def create_tech_provider_maps(technology_code_df, provider_df):
+    # Create mapping dictionaries for faster lookups
+    tech_map = dict(zip(
+        technology_code_df['Code'].astype(int),
+        technology_code_df['Abbr'].str.strip()
+    ))
+    provider_map = dict(zip(
+        provider_df['provider_id'].astype(int),
+        provider_df['holding_company']
+    ))
+    return tech_map, provider_map
+
+def process_block_data(group, tech_abbr):
+    # Process data for a single block_geoid and technology
+    tech_group = group[group['technology_abbr'] == tech_abbr]
+    providers = tech_group['provider_name'].unique().tolist()
+    
+    location_counts = []
+    max_downloads = []
+    max_uploads = []
+    
+    for provider in providers:
+        provider_group = tech_group[tech_group['provider_name'] == provider]
+        location_counts.append(provider_group['location_id'].nunique())
+        max_downloads.append(provider_group['max_advertised_download_speed'].max())
+        max_uploads.append(provider_group['max_advertised_upload_speed'].max())
+    
+    return {
+        'providers': providers,
+        'location_counts': location_counts,
+        'total_locations': sum(location_counts) if location_counts else 0,
+        'max_downloads': max_downloads,
+        'max_uploads': max_uploads
+    }
+
+def log_memory_usage(context=""):
+    # Log current memory usage
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    logging.info(f"Memory usage {context}: {mem_mb:.1f} MB")
+
 def aggregate_state_data(states_and_territories, technology_code_df, provider_df):
-    logging.debug("Aggregating state data")
-    required_columns = [
-        'frn', 'provider_id', 'brand_name', 'location_id', 'technology',
-        'max_advertised_download_speed', 'max_advertised_upload_speed', 'low_latency',
-        'business_residential_code', 'state_usps', 'block_geoid', 'h3_res8_id'
-    ]
-
-    # Log the columns in technology_code_df and provider_df to verify the column names
-    logging.debug(f"Technology Code DataFrame columns: {technology_code_df.columns.tolist()}")
-    logging.debug(f"Provider DataFrame columns: {provider_df.columns.tolist()}")
-
-    # Create lookup dictionaries once
-    tech_code_to_abbr = dict(zip(technology_code_df['Code'], technology_code_df['Abbr'].str.strip()))
-    provider_id_to_name = dict(zip(provider_df['provider_id'], provider_df['holding_company']))
- 
-    # Start step-by-step processing for each state or territory
-    for fips_code, abbr, state_name in states_and_territories:
-        fips_code_str = f"{int(fips_code):02d}"  # Ensure fips_code is 2 digits with leading zeros
-        state_dir = f"{fips_code_str}_{abbr}_{state_name}"
-        bdc_dir = os.path.join(state_dir, 'bdc')
-        if not os.path.exists(bdc_dir):
-            logging.warning(f"BDC directory not found: {bdc_dir}")
-            continue
-
-        logging.debug(f"Processing BDC directory: {bdc_dir}")
-        state_data = []
-        files_to_process = {}
-
-        # Step 1: Find all potential files that match the pattern
-        logging.debug("Step 1: Finding all potential files that match the pattern")
-        pattern = re.compile(r'(bdc_\d{2}.*_fixed_broadband_)([A-Z]\d{2}_)(.*)\.(csv|zip)')
-        for file_name in os.listdir(bdc_dir):
-            match = pattern.match(file_name)
-            if match:
-                base_name = match.group(1) + match.group(2)
-                date_str = match.group(3)
-                file_type = match.group(4)
-                if base_name not in files_to_process:
-                    files_to_process[base_name] = []
-                files_to_process[base_name].append((file_name, date_str, file_type))
-
-        # Step 2: Remove .csv files if both .csv and .zip exist
-        logging.debug("Step 2: Removing .csv files if both .csv and .zip exist")
-        for base_name, file_list in files_to_process.items():
-            csv_files = [f for f in file_list if f[2] == 'csv']
-            zip_files = [f for f in file_list if f[2] == 'zip']
-            if csv_files and zip_files:
-                files_to_process[base_name] = zip_files
-
-        # Step 3: Unzip the matched .zip files
-        logging.debug("Step 3: Unzipping the matched .zip files")
-        for base_name, file_list in files_to_process.items():
-            for file_name, date_str, file_type in file_list:
-                file_path = os.path.join(bdc_dir, file_name)
-                if file_type == 'zip':
-                    try:
-                        with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                            zip_ref.extractall(bdc_dir)
-                    except zipfile.BadZipFile:
-                        logging.warning(f"Bad ZIP file: {file_path}")
-                        continue
-
-        # Step 4: Check for required columns in CSV files
-        logging.debug("Step 4: Checking for required columns in CSV files")
-        valid_files = []
-        for file_name in os.listdir(bdc_dir):
-            if file_name.endswith('.csv') and not file_name.startswith('._'):
-                file_path = os.path.join(bdc_dir, file_name)
-                try:
-                    df = pd.read_csv(file_path, nrows=1)
-                    logging.debug(f"Columns in {file_name}: {df.columns.tolist()}")
-                    if all(col in df.columns for col in required_columns):
-                        valid_files.append(file_name)
-                except Exception as e:
-                    logging.error(f"Error reading file {file_path}: {e}")
-
-        # Step 5: Select the latest version of duplicate files
-        logging.debug("Step 5: Selecting the latest version of duplicate files")
-        latest_files = {}
-        for file_name in valid_files:
-            match = pattern.match(file_name)
-            if match:
-                base_name = match.group(1) + match.group(2)
-                date_str = match.group(3)
-                date_obj = datetime.strptime(date_str, '%d%b%Y')
-                if base_name not in latest_files or date_obj > latest_files[base_name][1]:
-                    latest_files[base_name] = (file_name, date_obj)
+    # Main function to aggregate state broadband data files
+    total_start_time = time.time()
+    total_states = len(states_and_territories)
+    logging.info(f"Starting processing of {total_states} states")
+    
+    tech_map, provider_map = create_tech_provider_maps(technology_code_df, provider_df)
+    
+    for state_idx, (fips_code, abbr, state_name) in enumerate(states_and_territories, 1):
+        state_start_time = time.time()
+        logging.info(f"Processing state {state_name} ({state_idx}/{total_states})")
         
-        logging.debug("Final list of files to process:\n" + "\n".join([f"    {file_name}" for file_name, _ in latest_files.values()]))
+        try:
+            fips_code_str = f"{int(fips_code):02d}"
+            state_dir = f"{fips_code_str}_{abbr}_{state_name}"
+            bdc_dir = os.path.join(state_dir, 'bdc')
+            
+            if not os.path.exists(bdc_dir):
+                logging.warning(f"BDC directory not found: {bdc_dir}")
+                continue
 
-        # Step 6: Concatenate all files into a DataFrame
-        logging.debug("Step 6: Concatenating all files into a DataFrame")
-        for base_name, (file_name, date_obj) in latest_files.items():
-            file_path = os.path.join(bdc_dir, file_name)
-            try:
-                # Read CSV with specified dtypes
-                df = pd.read_csv(file_path, dtype={
-                    'frn': str,
-                    'provider_id': str,
-                    'brand_name': str,
-                    'location_id': str,
-                    'technology': str,
-                    'block_geoid': str,
-                    'h3_res8_id': str
-                })
+            # Process state files
+            state_data = []
+            valid_files = [f for f in os.listdir(bdc_dir) if BDC_FILE_PATTERN.match(f) and not f.startswith('._')]
+            total_files = len(valid_files)
+            
+            file_start_time = time.time()
+            for file_idx, file_name in enumerate(valid_files, 1):
+                logging.info(f"Processing file {file_idx}/{total_files} for {state_name}: {file_name}")
+                file_path = os.path.join(bdc_dir, file_name)
                 
-                # Format fields with consistent length and leading zeros
-                df['block_geoid'] = df['block_geoid'].str.zfill(15)
-                df['provider_id'] = df['provider_id'].str.zfill(6)
-                df['location_id'] = df['location_id'].str.zfill(10)
-                df['h3_res8_id'] = df['h3_res8_id'].str.ljust(15)
-                
-                # Map technology codes to abbreviations using dictionary
-                df['technology_abbr'] = df['technology'].astype(int).map(tech_code_to_abbr)
- 
-                # Check for NaN values in technology mapping
-                if df['technology_abbr'].isna().any():
-                    logging.error("Found unmapped technology codes:")
-                    unmapped = df[df['technology_abbr'].isna()]['technology'].unique()
-                    logging.error(f"Unmapped codes: {unmapped}")
+                try:
+                    df = read_state_file(file_path)
+                    df['technology_abbr'] = df['technology'].astype(int).map(tech_map)
+                    df['provider_name'] = df['provider_id'].astype(int).map(provider_map)
+                    state_data.append(df)
+                except Exception as e:
+                    logging.error(f"Error processing file {file_path}: {e}")
+                    continue
 
-                # Map provider_id to holding_company using dictionary
-                df['provider_name'] = df['provider_id'].apply(
-                    lambda x: provider_id_to_name.get(int(x), str(x))
-                )
+            if state_data:
+                logging.info(f"Files processed in {time.time() - file_start_time:.1f} seconds")
+                log_memory_usage("after file processing")
 
-                state_data.append(df)
-                logging.debug(f"Reading file: {file_name}")
-            except Exception as e:
-                logging.error(f"Error processing file {file_path}: {e}")
-
-        if state_data:
-            try:
-                # Step 7: Concatenate the DataFrames
+                # Process block data with optimizations
+                block_start_time = time.time()
                 state_df = pd.concat(state_data, ignore_index=True)
-                logging.debug(f"Concatenated DataFrame columns: {state_df.columns.tolist()}")
-                logging.debug("Sample of concatenated DataFrame:")
-                logging.debug("\nFirst 5 rows of key columns:\n" + 
-                            state_df[['block_geoid', 'technology_abbr', 'provider_name']].head().to_string())
-                               
-                # Define output path
-                output_csv_path = os.path.join(state_dir, f"bdc_{fips_code_str}_{abbr}_BB.csv")
- 
-                # Step 8: Group by block_geoid and aggregate providers for each technology
-                grouped = state_df.groupby('block_geoid')
-                output_data = []
-
-                for block_geoid, group in grouped:
-                    row = {'block_geoid': block_geoid}
-                    for tech_abbr in technology_code_df['Abbr'].str.strip():
-                        tech_group = group[group['technology_abbr'] == tech_abbr]
-                        providers = tech_group['provider_name'].unique().tolist()
-                        
-                        # Get location counts per provider
-                        location_counts = []
-                        for provider in providers:
-                            loc_count = tech_group[tech_group['provider_name'] == provider]['location_id'].nunique()
-                            location_counts.append(loc_count)
-                        
-                        row[f'{tech_abbr}'] = providers if providers else []
-                        row[f'{tech_abbr}L'] = location_counts if location_counts else []
-                        row[f'{tech_abbr}T'] = sum(location_counts) if location_counts else 0
-                    output_data.append(row)
-
-                output_df = pd.DataFrame(output_data)
+                state_data = None  # Free memory
                 
-                # Ensure all technology columns exist and add calculated columns
+                # Pre-compute all provider stats at once
+                logging.info("Pre-computing provider statistics...")
+                provider_stats = (state_df.groupby(['block_geoid', 'technology_abbr', 'provider_name'])
+                    .agg({
+                        'location_id': 'nunique',
+                        'max_advertised_download_speed': 'max',
+                        'max_advertised_upload_speed': 'max'
+                    })
+                    .reset_index())
+                
+                # Free original DataFrame
+                state_df = None
+                
+                # Process in chunks
+                chunk_size = 1000
+                output_data = []
+                total_blocks = provider_stats['block_geoid'].nunique()
+                df_start_time = time.time()
+                
+                for chunk_idx, block_group in enumerate(np.array_split(provider_stats['block_geoid'].unique(), total_blocks // chunk_size + 1)):
+                    if chunk_idx % 10 == 0:
+                        current_block = min(chunk_idx * chunk_size, total_blocks)
+                        logging.info(f"Processing block chunk {current_block}/{total_blocks}")
+                    
+                    # Get stats for current blocks
+                    chunk_stats = provider_stats[provider_stats['block_geoid'].isin(block_group)]
+                    
+                    # Process each block
+                    for block_geoid in block_group:
+                        row = {'block_geoid': block_geoid}
+                        block_data = chunk_stats[chunk_stats['block_geoid'] == block_geoid]
+                        
+                        for tech_abbr in technology_code_df['Abbr'].str.strip():
+                            tech_data = block_data[block_data['technology_abbr'] == tech_abbr]
+                            
+                            if not tech_data.empty:
+                                row[f'{tech_abbr}'] = tech_data['provider_name'].tolist()
+                                row[f'{tech_abbr}L'] = tech_data['location_id'].tolist()
+                                row[f'{tech_abbr}T'] = tech_data['location_id'].sum()
+                                row[f'{tech_abbr}D'] = tech_data['max_advertised_download_speed'].astype(int).tolist()
+                                row[f'{tech_abbr}U'] = tech_data['max_advertised_upload_speed'].astype(int).tolist()
+                            else:
+                                row[f'{tech_abbr}'] = []
+                                row[f'{tech_abbr}L'] = []
+                                row[f'{tech_abbr}T'] = 0
+                                row[f'{tech_abbr}D'] = []
+                                row[f'{tech_abbr}U'] = []
+                        
+                        output_data.append(row)
+                    
+                    # Create DataFrame periodically to save memory
+                    if len(output_data) >= chunk_size * 2:
+                        temp_df = pd.DataFrame(output_data)
+                        output_df = pd.concat([output_df, temp_df]) if 'output_df' in locals() else temp_df
+                        output_data = []
+                
+                # Process remaining data
+                if output_data:
+                    temp_df = pd.DataFrame(output_data)
+                    output_df = pd.concat([output_df, temp_df]) if 'output_df' in locals() else temp_df
+
+                # Ensure all columns exist
                 for tech_abbr in technology_code_df['Abbr'].str.strip():
                     if f'{tech_abbr}' not in output_df.columns:
                         output_df[f'{tech_abbr}'] = output_df.apply(lambda x: [], axis=1)
                         output_df[f'{tech_abbr}L'] = output_df.apply(lambda x: [], axis=1)
-                    # Add provider count column
+                        output_df[f'{tech_abbr}T'] = 0
+                        output_df[f'{tech_abbr}D'] = output_df.apply(lambda x: [], axis=1)
+                        output_df[f'{tech_abbr}U'] = output_df.apply(lambda x: [], axis=1)
                     output_df[f'{tech_abbr}C'] = output_df[f'{tech_abbr}'].apply(len)
-                    # Add total locations column
-                    output_df[f'{tech_abbr}T'] = output_df[f'{tech_abbr}L'].apply(lambda x: sum(x) if x else 0)
 
                 # Create ordered column list
                 columns = ['block_geoid']
@@ -189,42 +194,38 @@ def aggregate_state_data(states_and_territories, technology_code_df, provider_df
                         f'{tech_abbr}',      # provider names list
                         f'{tech_abbr}C',     # provider count
                         f'{tech_abbr}L',     # location counts list
-                        f'{tech_abbr}T'      # total locations
+                        f'{tech_abbr}T',     # total locations
+                        f'{tech_abbr}D',     # max download speeds
+                        f'{tech_abbr}U'      # max upload speeds
                     ])
                 
-                # Reorder columns
                 output_df = output_df[columns]
+                logging.info(f"DataFrame creation completed in {time.time() - df_start_time:.1f} seconds")
                 
-                logging.debug(f"DataFrame with ordered columns: {output_df.columns.tolist()}")
-                logging.debug(f"DataFrame with ordered columns:\n{output_df.head()}")
+                # Write and compress output
+                output_path = os.path.join(state_dir, f"bdc_{fips_code_str}_{abbr}_BB.csv")
+                output_df.to_csv(output_path, index=False)
+                
+                with zipfile.ZipFile(f"{output_path[:-4]}.zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    zipf.write(output_path, os.path.basename(output_path))
+                os.remove(output_path)
+                
+                # Cleanup temporary files
+                for file_name in os.listdir(bdc_dir):
+                    if file_name.endswith('.csv') and not file_name.startswith('._'):
+                        try:
+                            os.remove(os.path.join(bdc_dir, file_name))
+                        except Exception as e:
+                            logging.error(f"Error removing file {file_name}: {e}")
 
-                # Write output to CSV
-                output_df.to_csv(output_csv_path, index=False)
-                logging.debug(f"Wrote output to {output_csv_path}")
+                state_time = time.time() - state_start_time
+                logging.info(f"Completed {state_name} in {state_time:.1f} seconds")
+                log_memory_usage(f"after completing {state_name}")
 
-                # Step 10: Zip the output file
-                logging.debug("Step 10: Zipping the output file")
-                zip_file_path = output_csv_path.replace('.csv', '.zip')
-                logging.debug(f"Zipping CSV file: {zip_file_path}")
-                with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    zipf.write(output_csv_path, os.path.basename(output_csv_path))
+        except Exception as e:
+            logging.error(f"Error processing state {state_name}: {e}")
+            continue
 
-                logging.debug(f"Removing temporary CSV file: {output_csv_path}")
-                os.remove(output_csv_path)
-            except Exception as e:
-                logging.error(f"Error during aggregation or writing output for state {state_name}: {e}")
-
-        # Ensure there are zipped versions for every .csv file in the bdc subdirectory and remove the .csv versions
-        logging.debug("Ensuring there are zipped versions for every .csv file in the bdc subdirectory and removing the .csv versions")
-        for file_name in os.listdir(bdc_dir):
-            if file_name.endswith('.csv') and not file_name.startswith('._'):
-                csv_file_path = os.path.join(bdc_dir, file_name)
-                zip_file_path = csv_file_path.replace('.csv', '.zip')
-                if not os.path.exists(zip_file_path):
-                    logging.debug(f"Zipping CSV file: {zip_file_path}")
-                    with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                        zipf.write(csv_file_path, os.path.basename(csv_file_path))
-                logging.debug(f"Removing CSV file: {csv_file_path}")
-                os.remove(csv_file_path)
-
-    logging.debug("State data aggregation completed")
+    total_time = time.time() - total_start_time
+    logging.info(f"Completed all states in {total_time:.1f} seconds")
+    log_memory_usage("final")
