@@ -1,5 +1,7 @@
+# Constants for the project
+
 # Example list of states and territories formatted as (FIPS Code, Abbreviation, Full Name)
-states_and_territories = [
+STATES_AND_TERRITORIES = (
     ("01", "AL", "Alabama"),
     ("02", "AK", "Alaska"),
     ("04", "AZ", "Arizona"),
@@ -61,4 +63,23 @@ states_and_territories = [
     ("72", "PR", "Puerto Rico"),
     ("74", "UM", "U.S. Minor Outlying Islands"),
     ("78", "VI", "U.S. Virgin Islands")
-]
+)
+
+
+
+# Technology abbreviation mapping   
+TECH_ABBR_MAPPING = {
+    10: "Copper",   # 6 chars
+    40: "Cable",    # 5 chars
+    50: "Fiber",    # 5 chars
+    60: "GeoSat",   # 6 chars
+    61: "NGeoSt",   # 6 chars
+    70: "UnlFWA",   # 6 chars
+    71: "LicFWA",   # 6 chars
+    72: "LBRFWA",   # 6 chars
+    0: "Other",     # 5 chars
+    300: "3G",      # 2 chars
+    400: "4GLTE",   # 5 chars
+    500: "5GNR"     # 4 chars
+}
+
