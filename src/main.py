@@ -1,33 +1,31 @@
+# main.py
+
 import os
 import argparse
 import logging
-import sys  # Import sys module
-from constant import STATES_AND_TERRITORIES
+import sys
+import traceback
+from constant import STATES_AND_TERRITORIES, TECH_ABBR_MAPPING
 from prepdata import prepare_data, load_holder_mapping
-from readin import read_data, check_required_files
+from readin import read_data, check_required_files, get_state_info
 from merge import merge_data
 from writeout import write_geojson_and_convert_to_gpkg
 
 def setup_logging(log_file, base_dir):
+    log_format = '%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
+    log_level = logging.INFO
+
+    handlers = [logging.StreamHandler(sys.stdout)]
     if log_file is not None:
         log_file_path = os.path.join(base_dir, log_file)
-        logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', filename=log_file_path, filemode='w')
-    else:
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        handlers.append(logging.FileHandler(log_file_path, mode='w'))
+        log_level = logging.DEBUG
 
-def expand_state_ranges(state_args):
-    state_abbrs = [state[1] for state in STATES_AND_TERRITORIES]
-    expanded_states = []
-    for arg in state_args:
-        if '..' in arg:
-            start, end = arg.split('..')
-            start_index = state_abbrs.index(start)
-            end_index = state_abbrs.index(end)
-            expanded_states.extend(state_abbrs[start_index:end_index + 1])
-        else:
-            expanded_states.append(arg)
-    logging.debug(f'Expanded state ranges: {expanded_states}')
-    return expanded_states
+    # Remove any existing handlers to avoid duplicates
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    
+    logging.basicConfig(level=log_level, format=log_format, handlers=handlers, force=True)
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Build broadband service geopackage files for US states and territories.')
@@ -35,21 +33,49 @@ def parse_arguments():
     parser.add_argument('-s', '--state', type=str, nargs='*', default=[state[1] for state in STATES_AND_TERRITORIES], help='State abbreviation(s) to process')
     parser.add_argument('--log-file', type=str, nargs='?', const='catfccbdc_log.log', help='Log file path')
     parser.add_argument('-o', '--output-dir', type=str, help='Output directory for data files')
-    parser.add_argument('-v', '--version', action='version', version='%(prog)s 1.0', help='Print version and exit')
-    args = parser.parse_args()
-    args.state = expand_state_ranges(args.state)
-    logging.info(f'States to be processed: {args.state}')
-    return args
+    parser.add_argument('-v', '--version', action='version', version='%(prog)s 2.0', help='Print version and exit')
+    return parser.parse_args()
+
+def expand_state_ranges(states):
+    state_abbrs = [state[1] for state in STATES_AND_TERRITORIES]
+    expanded_states = []
+    
+    for state in states:
+        if '..' in state:
+            start, end = state.split('..')
+            if start not in state_abbrs or end not in state_abbrs:
+                raise ValueError(f"Invalid state range: {state}")
+            start_index = state_abbrs.index(start)
+            end_index = state_abbrs.index(end)
+            if start_index > end_index:
+                raise ValueError(f"Invalid state range: {state}")
+            expanded_states.extend(state_abbrs[start_index:end_index + 1])
+        else:
+            if state not in state_abbrs:
+                raise ValueError(f"Invalid state abbreviation: {state}")
+            expanded_states.append(state)
+    
+    return expanded_states
 
 def main():
+    # Parse arguments first
     args = parse_arguments()
+    
+    # Set up logging before any logging calls
     setup_logging(args.log_file, args.base_dir)
+    
+    # Now expand state ranges after logging is configured
+    try:
+        states_to_process = expand_state_ranges(args.state)
+        logging.info(f'States to be processed: {states_to_process}')
+    except ValueError as e:
+        logging.error("Error processing state ranges")
+        return
 
     base_dir = args.base_dir
     output_dir = args.output_dir
-    states_to_process = args.state
 
-    logging.info(f'Starting processing for states: {states_to_process} in base directory: {base_dir}')
+    logging.info(f'Starting processing for states in base directory: {base_dir}')
     
     holder_mapping = load_holder_mapping(base_dir)
     logging.debug(f'Loaded holder mapping: {holder_mapping}')
@@ -63,28 +89,30 @@ def main():
             tabblock_data = read_data(base_dir, state)
             logging.info(f'Finished reading tabblock data for state: {state}')
             
-            bdc_data = read_data(base_dir, state, bdc=True)
-            logging.info(f'Finished reading BDC data for state: {state}')
+            bdc_file_paths = read_data(base_dir, state, bdc=True)
+            logging.info(f'Found BDC files for state: {state}')
             
-            merged_data = merge_data(tabblock_data, bdc_data, holder_mapping)
+            merged_data = merge_data(tabblock_data, bdc_file_paths, holder_mapping)
             logging.info(f'Finished merging data for state: {state}')
             
-            write_geojson_and_convert_to_gpkg(merged_data, base_dir, state, output_dir)
+            # Determine the output directory for the current state
+            fips, abbr, name = get_state_info(state)
+            if output_dir is None:
+                state_output_dir = os.path.join(base_dir, 'USA_FCC-bdc', f"{fips}_{abbr}_{name}")
+            else:
+                state_output_dir = output_dir
+
+            # Ensure the output directory exists
+            os.makedirs(state_output_dir, exist_ok=True)
+
+            write_geojson_and_convert_to_gpkg(merged_data, base_dir, state, state_output_dir)
             logging.info(f'Finished writing GeoJSON and GeoPackage for state: {state}')
             
         except FileNotFoundError as e:
             logging.warning(f"Skipped state {state}: {e}")
         except Exception as e:
             logging.error(f"Error processing state {state}: {e}")
+            logging.error(traceback.format_exc())
 
 if __name__ == '__main__':
     main()
-
-# Test function to simulate argument parsing
-def test_expand_state_ranges():
-    test_args = ['AL', 'CA', 'AL..CT', 'MO', 'NJ..ND']
-    expanded_states = expand_state_ranges(test_args)
-    print(f'Resulting list of states: {expanded_states}')
-
-# Uncomment the following line to run the test function
-# test_expand_state_ranges()

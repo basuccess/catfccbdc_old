@@ -3,7 +3,8 @@
 import os
 import re
 import pandas as pd
-from constant import STATES_AND_TERRITORIES, BDC_US_PROVIDER_FILE_PATTERN
+import logging
+from constant import STATES_AND_TERRITORIES, BDC_US_PROVIDER_FILE_PATTERN, TECH_ABBR_MAPPING
 
 def prepare_lookup_tables():
     # Prepare dictionaries for quick lookup
@@ -28,6 +29,9 @@ def load_holder_mapping(base_dir):
     holder_mapping_file = os.path.join(resources_dir, most_recent_file)
     
     holder_mapping_df = pd.read_csv(holder_mapping_file)
+    # Convert provider_id to string
+    holder_mapping_df['provider_id'] = holder_mapping_df['provider_id'].astype(str)
+
     holder_mapping = dict(zip(holder_mapping_df['provider_id'], holder_mapping_df['holding_company']))
     return holder_mapping
 
@@ -50,7 +54,7 @@ def check_directory_structure(base_dir):
             raise FileNotFoundError(f"Required directory does not exist: {directory}")
 
 def prepare_data(base_dir, state):
-    # Function to prepare data
+    logging.debug(f"Preparing data for state: {state}")
     check_directory_structure(base_dir)
     lookup_tables = prepare_lookup_tables()
     fcc_bdc_df, census_df = prepare_dataframes()

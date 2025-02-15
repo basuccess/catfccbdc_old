@@ -64,20 +64,17 @@ STATES_AND_TERRITORIES = (
     ("78", "VI", "U.S._Virgin_Islands")
 )
 
-# Technology abbreviation mapping   
+# Technology abbreviation mapping with indicator for speed calculations
 TECH_ABBR_MAPPING = {
-    10: "Copper",   # 6 chars
-    40: "Cable",    # 5 chars
-    50: "Fiber",    # 5 chars
-    60: "GeoSat",   # 6 chars
-    61: "NGeoSt",   # 6 chars
-    70: "UnlFWA",   # 6 chars
-    71: "LicFWA",   # 6 chars
-    72: "LBRFWA",   # 6 chars
-    0: "Other",     # 5 chars
-    300: "3G",      # 2 chars
-    400: "4GLTE",   # 5 chars
-    500: "5GNR"     # 4 chars
+    10: ("Copper", True),   # 6 chars
+    40: ("Cable", True),    # 5 chars
+    50: ("Fiber", True),    # 5 chars
+    60: ("GeoSat", False),  # 6 chars
+    61: ("NGeoSt", False),  # 6 chars
+    70: ("UnlFWA", False),  # 6 chars
+    71: ("LicFWA", True),   # 6 chars
+    72: ("LBRFWA", True),   # 6 chars
+    0: ("Other", False)     # 5 chars
 }
 
 BDC_US_PROVIDER_FILE_PATTERN = r'bdc_us_provider_list_[A-Z]\d{2}_(.*)\.(zip|csv)'
