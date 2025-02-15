@@ -5,6 +5,7 @@ import argparse
 import logging
 import sys
 import traceback
+import gc  # Import garbage collector
 from constant import STATES_AND_TERRITORIES, TECH_ABBR_MAPPING
 from prepdata import prepare_data, load_holder_mapping
 from readin import read_data, check_required_files, get_state_info
@@ -113,6 +114,13 @@ def main():
         except Exception as e:
             logging.error(f"Error processing state {state}: {e}")
             logging.error(traceback.format_exc())
+        finally:
+            # Clear variables and force garbage collection
+            del tabblock_data
+            del bdc_file_paths
+            del merged_data
+            gc.collect()
+            logging.info(f'Cleared memory for state: {state}')        
 
 if __name__ == '__main__':
     main()

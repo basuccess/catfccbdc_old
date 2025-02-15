@@ -11,11 +11,7 @@ setup(
     install_requires=[
         'pandas',
         'geopandas',
-        'shapely',
-        'fiona',
-        'pyproj',
-        'requests',
-        'click'
+        'tpdm',
     ],
     entry_points={
         'console_scripts': [
