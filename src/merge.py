@@ -7,6 +7,15 @@ import logging
 from tqdm import tqdm
 from constant import TECH_ABBR_MAPPING
 from prepdata import load_holder_mapping
+import psutil  # Import psutil for memory monitoring
+import gc  # Import garbage collector
+
+def monitor_memory(threshold=80):
+    """Monitor memory usage and log a warning if it exceeds the threshold."""
+    memory_usage = psutil.virtual_memory().percent
+    if memory_usage > threshold:
+        logging.warning(f"Memory usage is high: {memory_usage}%")
+        gc.collect()  # Force garbage collection
 
 def get_tech_abbr(tech_code):
     """Get technology abbreviation from technology code with detailed logging."""
@@ -37,6 +46,7 @@ def get_holder_name(provider_id, holder_mapping):
 def process_bdc_file(file_path, holder_mapping):
     logging.debug(f"Reading BDC file: {file_path}")
     df = gpd.read_file(file_path)
+    monitor_memory()  # Monitor memory usage after reading BDC file
 
     # Log the data types of the provider_id column
     logging.debug(f"provider_id dtype: {df['provider_id'].dtype}")
@@ -54,6 +64,7 @@ def process_bdc_file(file_path, holder_mapping):
     except Exception as e:
         logging.error(f"Error mapping technology codes to abbreviations: {str(e)}")
         df['tech_abbr'] = "Unknown"
+    monitor_memory()  # Monitor memory usage after mapping technology abbreviations
     
     logging.debug(f"Mapping holding company names for file: {file_path}")
     try:
@@ -61,6 +72,7 @@ def process_bdc_file(file_path, holder_mapping):
     except Exception as e:
         logging.error(f"Error mapping provider_id to holding company: {str(e)}")
         df['holding_company'] = "Unknown"
+    monitor_memory()  # Monitor memory usage after mapping holding company names
     
     return df
 
@@ -68,10 +80,17 @@ def merge_data(tabblock_df, bdc_file_paths, holder_mapping):
     # Set CRS to EPSG:4269 (NAD83) for tabblock_df
     logging.debug("Setting CRS to EPSG:4269 for tabblock_df")
     tabblock_df = tabblock_df.to_crs(epsg=4269)
+    monitor_memory()  # Monitor memory usage after setting CRS
 
     # Convert tabblock_df to GeoJSON format
     logging.debug("Converting tabblock_df to GeoJSON format")
     tabblock_geojson = json.loads(tabblock_df.to_json())
+    monitor_memory()  # Monitor memory usage after converting to GeoJSON
+
+    # Sort tabblock GeoJSON features by GEOID20
+    logging.debug("Sorting tabblock GeoJSON features by GEOID20")
+    tabblock_geojson['features'].sort(key=lambda x: x['properties']['GEOID20'])
+    monitor_memory()  # Monitor memory usage after sorting tabblock GeoJSON features
 
     # Set up tqdm for pandas
     tqdm.pandas()
@@ -82,14 +101,7 @@ def merge_data(tabblock_df, bdc_file_paths, holder_mapping):
         bdc_df = process_bdc_file(file_path, holder_mapping)
         bdc_df_list.append(bdc_df)
     bdc_df = pd.concat(bdc_df_list, ignore_index=True)
-
-    # Add tech_abbr to BDC data
-    bdc_df['tech_abbr'] = bdc_df['technology'].progress_map(get_tech_abbr)
-    logging.info("Finished adding tech_abbr")    
-
-    # Add holding_company to BDC data
-    bdc_df['holding_company'] = bdc_df['provider_id'].progress_map(lambda x: get_holder_name(x, holder_mapping))
-    logging.info("Finished adding holding_company")    
+    monitor_memory()  # Monitor memory usage after processing BDC files
 
     # Group BDC data with progress bar
     grouped_bdc = bdc_df.groupby(['block_geoid', 'technology', 'tech_abbr', 'provider_id', 'holding_company', 'brand_name', 'location_id']).agg({
@@ -99,26 +111,26 @@ def merge_data(tabblock_df, bdc_file_paths, holder_mapping):
         'business_residential_code': 'max'
     }).reset_index()
     logging.info("Finished grouping BDC files")
+    monitor_memory()  # Monitor memory usage after grouping BDC files
+
+    # Sort grouped_bdc by block_geoid
+    logging.debug("Sorting grouped_bdc by block_geoid")
+    grouped_bdc = grouped_bdc.sort_values(by='block_geoid')
+    monitor_memory()  # Monitor memory usage after sorting grouped_bdc
 
     # Create a dictionary to map block_geoid to bdc_locations
     bdc_locations_dict = {}
     for block_geoid, group in tqdm(grouped_bdc.groupby('block_geoid'), desc="Creating bdc_locations_dict"):
         bdc_locations_dict[block_geoid] = group.to_dict(orient='records')
     logging.info("Finished grouping bdc_locations_dict")
-
-    # Sort tabblock GeoJSON features by GEOID20
-    logging.debug("Sorting tabblock GeoJSON features by GEOID20")
-    tabblock_geojson['features'].sort(key=lambda x: x['properties']['GEOID20'])
-
-    # Sort bdc_locations_dict by block_geoid
-    logging.debug("Sorting bdc_locations_dict by block_geoid")
-    sorted_bdc_locations_dict = dict(sorted(bdc_locations_dict.items()))
+    monitor_memory()  # Monitor memory usage after creating bdc_locations_dict
 
     # Merge BDC data with tabblock GeoJSON
     logging.debug("Merging BDC data with tabblock GeoJSON")
     for feature in tqdm(tabblock_geojson['features'], desc="Merging records"):
         geoid20 = feature['properties']['GEOID20']
-        feature['properties']['bdc_locations'] = sorted_bdc_locations_dict.get(geoid20, [])
+        feature['properties']['bdc_locations'] = bdc_locations_dict.get(geoid20, [])
     logging.info("Finished merging records")
+    monitor_memory()  # Monitor memory usage after merging records
 
     return tabblock_geojson

@@ -6,6 +6,7 @@ import logging
 import sys
 import traceback
 import gc  # Import garbage collector
+import psutil  # Import psutil for memory monitoring
 from constant import STATES_AND_TERRITORIES, TECH_ABBR_MAPPING
 from prepdata import prepare_data, load_holder_mapping
 from readin import read_data, check_required_files, get_state_info
@@ -58,6 +59,13 @@ def expand_state_ranges(states):
     
     return expanded_states
 
+def monitor_memory(threshold=80):
+    """Monitor memory usage and log a warning if it exceeds the threshold."""
+    memory_usage = psutil.virtual_memory().percent
+    if memory_usage > threshold:
+        logging.warning(f"Memory usage is high: {memory_usage}%")
+        gc.collect()  # Force garbage collection
+
 def main():
     # Parse arguments first
     args = parse_arguments()
@@ -80,21 +88,26 @@ def main():
     
     holder_mapping = load_holder_mapping(base_dir)
     logging.debug(f'Loaded holder mapping: {holder_mapping}')
+    monitor_memory()  # Monitor memory usage after loading holder mapping
 
     for state in states_to_process:
         logging.info(f'Processing state: {state}')
         try:
             prepare_data(base_dir, state)
             logging.info(f'Finished preparing data for state: {state}')
+            monitor_memory()  # Monitor memory usage after preparing data
             
             tabblock_data = read_data(base_dir, state)
             logging.info(f'Finished reading tabblock data for state: {state}')
+            monitor_memory()  # Monitor memory usage after reading tabblock data
             
             bdc_file_paths = read_data(base_dir, state, bdc=True)
             logging.info(f'Found BDC files for state: {state}')
+            monitor_memory()  # Monitor memory usage after reading BDC file paths
             
             merged_data = merge_data(tabblock_data, bdc_file_paths, holder_mapping)
             logging.info(f'Finished merging data for state: {state}')
+            monitor_memory()  # Monitor memory usage after merging data
             
             # Determine the output directory for the current state
             fips, abbr, name = get_state_info(state)
@@ -108,6 +121,7 @@ def main():
 
             write_geojson_and_convert_to_gpkg(merged_data, base_dir, state, state_output_dir)
             logging.info(f'Finished writing GeoJSON and GeoPackage for state: {state}')
+            monitor_memory()  # Monitor memory usage after writing output
             
         except FileNotFoundError as e:
             logging.warning(f"Skipped state {state}: {e}")
@@ -120,7 +134,8 @@ def main():
             del bdc_file_paths
             del merged_data
             gc.collect()
-            logging.info(f'Cleared memory for state: {state}')        
+            logging.info(f'Cleared memory for state: {state}')
+            monitor_memory()  # Monitor memory usage after each state        
 
 if __name__ == '__main__':
     main()
