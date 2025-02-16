@@ -130,9 +130,12 @@ def main():
             logging.error(traceback.format_exc())
         finally:
             # Clear variables and force garbage collection
-            del tabblock_data
-            del bdc_file_paths
-            del merged_data
+            if 'tabblock_data' in locals():
+                del tabblock_data
+            if 'bdc_file_paths' in locals():
+                del bdc_file_paths
+            if 'merged_data' in locals():
+                del merged_data
             gc.collect()
             logging.info(f'Cleared memory for state: {state}')
             monitor_memory()  # Monitor memory usage after each state        

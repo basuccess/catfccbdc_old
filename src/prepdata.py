@@ -28,11 +28,12 @@ def load_holder_mapping(base_dir):
     most_recent_file = files[0]
     holder_mapping_file = os.path.join(resources_dir, most_recent_file)
     
-    holder_mapping_df = pd.read_csv(holder_mapping_file)
-    # Convert provider_id to string
-    holder_mapping_df['provider_id'] = holder_mapping_df['provider_id'].astype(str)
-
-    holder_mapping = dict(zip(holder_mapping_df['provider_id'], holder_mapping_df['holding_company']))
+    # Read the CSV file in chunks to reduce memory usage
+    holder_mapping = {}
+    for chunk in pd.read_csv(holder_mapping_file, chunksize=10000):
+        chunk['provider_id'] = chunk['provider_id'].astype(str)
+        holder_mapping.update(dict(zip(chunk['provider_id'], chunk['holding_company'])))
+    
     return holder_mapping
 
 def prepare_dataframes():

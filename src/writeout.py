@@ -60,14 +60,8 @@ def transform_bdc_locations(bdc_locations, housing20):
         index = tech_map[tech_abbr]['holding_company'].index(holding_company)
         tech_map[tech_abbr]['locations'][index] += 1
 
-    # Debugging: Log the contents of location_max_speeds
-    # logging.debug(f"location_max_speeds: {location_max_speeds}")
-
     # Filter location_max_speeds to only include relevant technologies for calculations
     filtered_max_speeds = {k: v for k, v in location_max_speeds.items() if TECH_ABBR_MAPPING[v[2]][1]}
-
-    # Debugging: Log the contents of filtered_max_speeds
-    # logging.debug(f"filtered_max_speeds: {filtered_max_speeds}")
 
     # Separate speeds by business_residential_code
     business_speeds = {k: v[0] for k, v in filtered_max_speeds.items() if v[1] == 'B'}
@@ -100,7 +94,7 @@ def transform_bdc_locations(bdc_locations, housing20):
     
     return tech_map, len(location_ids), residential_unserved_count, residential_underserved_count, residential_served_count, \
         residential_and_business_unserved_count, residential_and_business_underserved_count, residential_and_business_served_count, \
-        business_unserved_count,business_underserved_count, business_served_count
+        business_unserved_count, business_underserved_count, business_served_count
 
 def write_geojson_and_convert_to_gpkg(merged_data, base_dir, state_abbr, output_dir=None):
     # Set CRS to EPSG:4269 (NAD83)

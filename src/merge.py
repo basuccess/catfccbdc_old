@@ -9,6 +9,9 @@ from constant import TECH_ABBR_MAPPING
 from prepdata import load_holder_mapping
 import psutil  # Import psutil for memory monitoring
 import gc  # Import garbage collector
+from dask import dataframe as dd
+from dask.distributed import Client
+from collections import defaultdict
 
 def monitor_memory(threshold=80):
     """Monitor memory usage and log a warning if it exceeds the threshold."""
@@ -48,6 +51,9 @@ def process_bdc_file(file_path, holder_mapping):
     df = gpd.read_file(file_path)
     monitor_memory()  # Monitor memory usage after reading BDC file
 
+    # Ensure block_geoid is treated as a string
+    df['block_geoid'] = df['block_geoid'].astype(str)
+
     # Log the data types of the provider_id column
     logging.debug(f"provider_id dtype: {df['provider_id'].dtype}")
     logging.debug(f"Sample provider_ids: {df['provider_id'].head()}")
@@ -76,7 +82,16 @@ def process_bdc_file(file_path, holder_mapping):
     
     return df
 
-def merge_data(tabblock_df, bdc_file_paths, holder_mapping):
+def process_chunk(chunk):
+    grouped_chunk = chunk.groupby(['block_geoid', 'technology', 'tech_abbr', 'provider_id', 'holding_company', 'brand_name', 'location_id']).agg({
+        'max_advertised_download_speed': 'max',
+        'max_advertised_upload_speed': 'max',
+        'low_latency': 'max',
+        'business_residential_code': 'max'
+    }).reset_index()
+    return grouped_chunk
+
+def merge_data(tabblock_df, bdc_file_paths, holder_mapping, chunk_size=5000):  # Increased chunk size
     # Set CRS to EPSG:4269 (NAD83) for tabblock_df
     logging.debug("Setting CRS to EPSG:4269 for tabblock_df")
     tabblock_df = tabblock_df.to_crs(epsg=4269)
@@ -95,7 +110,7 @@ def merge_data(tabblock_df, bdc_file_paths, holder_mapping):
     # Set up tqdm for pandas
     tqdm.pandas()
 
-    # Process BDC files
+    # Process BDC files in chunks
     bdc_df_list = []
     for file_path in bdc_file_paths:
         bdc_df = process_bdc_file(file_path, holder_mapping)
@@ -103,33 +118,28 @@ def merge_data(tabblock_df, bdc_file_paths, holder_mapping):
     bdc_df = pd.concat(bdc_df_list, ignore_index=True)
     monitor_memory()  # Monitor memory usage after processing BDC files
 
-    # Group BDC data with progress bar
-    grouped_bdc = bdc_df.groupby(['block_geoid', 'technology', 'tech_abbr', 'provider_id', 'holding_company', 'brand_name', 'location_id']).agg({
-        'max_advertised_download_speed': 'max',
-        'max_advertised_upload_speed': 'max',
-        'low_latency': 'max',
-        'business_residential_code': 'max'
-    }).reset_index()
-    logging.info("Finished grouping BDC files")
-    monitor_memory()  # Monitor memory usage after grouping BDC files
+    # Ensure block_geoid is treated as a string
+    bdc_df['block_geoid'] = bdc_df['block_geoid'].astype(str)
 
-    # Sort grouped_bdc by block_geoid
-    logging.debug("Sorting grouped_bdc by block_geoid")
-    grouped_bdc = grouped_bdc.sort_values(by='block_geoid')
-    monitor_memory()  # Monitor memory usage after sorting grouped_bdc
+    # Convert to Dask DataFrame
+    ddf = dd.from_pandas(bdc_df, npartitions=cpu_count())
 
-    # Create a dictionary to map block_geoid to bdc_locations
-    bdc_locations_dict = {}
-    for block_geoid, group in tqdm(grouped_bdc.groupby('block_geoid'), desc="Creating bdc_locations_dict"):
-        bdc_locations_dict[block_geoid] = group.to_dict(orient='records')
-    logging.info("Finished grouping bdc_locations_dict")
-    monitor_memory()  # Monitor memory usage after creating bdc_locations_dict
+    # Process BDC data in chunks using Dask
+    bdc_locations_dict = defaultdict(list)
+    grouped_ddf = ddf.groupby('block_geoid').apply(process_chunk, meta=bdc_df).compute()
+
+    for block_geoid, group in grouped_ddf.groupby('block_geoid'):
+        bdc_locations_dict[block_geoid].extend(group.to_dict(orient='records'))
+        monitor_memory()  # Monitor memory usage after processing each chunk
+
+    logging.info("Finished processing BDC data in chunks")
+    monitor_memory()  # Monitor memory usage after processing all chunks
 
     # Merge BDC data with tabblock GeoJSON
     logging.debug("Merging BDC data with tabblock GeoJSON")
     for feature in tqdm(tabblock_geojson['features'], desc="Merging records"):
         geoid20 = feature['properties']['GEOID20']
-        feature['properties']['bdc_locations'] = bdc_locations_dict.get(geoid20, [])
+        feature['properties']['bdc_locations'] = bdc_locations_dict.get(str(geoid20), [])
     logging.info("Finished merging records")
     monitor_memory()  # Monitor memory usage after merging records
 
