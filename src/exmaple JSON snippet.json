@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "040019426001000",
+      "type": "Feature",
+      "properties": {
+        "block_geoid": "040019426001000",
+        "GeoSat": {
+          "locations": [
+            1,
+            5
+          ],
+          "provider_id": [
+              "130627",
+              "290111"
+          ],
+          "brand_name": [
+            "HughesNet",
+            "Viasat Inc"
+          ],
+          "technology": "60",
+          "technology_description": "GeoSat",
+          "max_advertised_download_speed": [
+            100,
+            10
+          ],
+          "max_advertised_upload_speed": [
+            "5",
+            "1"
+          ],
+          "low_latency": [
+            "0",
+            "0"
+          ],
+          "business_residential_code": [
+            "X",
+            "R"
+          ]
+        }
+      }
+    }
+  ]
+}
